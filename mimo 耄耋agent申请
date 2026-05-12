@@ -1,0 +1,391 @@
+# -mimo-cpp-python-tutor-agent/
+├── frontend/                # 前端React项目
+├── backend/
+│   ├── main-server/         # Node.js核心主服务
+│   └── code-runner/         # FastAPI代码执行服务
+└── README.md
+{
+  "name": "tutor-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.6.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "postcss": "^8.4.32",
+    "vite": "^5.0.8"
+  }
+}
+import { useState, useRef } from 'react';
+import * as monaco from 'monaco-editor';
+import { MonacoEditor } from '@monaco-editor/react';
+import './index.css';
+
+function App() {
+  const [language, setLanguage] = useState('cpp');
+  const [output, setOutput] = useState('');
+  const [userQuestion, setUserQuestion] = useState('');
+  const [chatHistory, setChatHistory] = useState([]);
+  const editorRef = useRef(null);
+
+  // 调用后端Agent接口获取引导提问
+  const askAgent = async () => {
+    try {
+      const res = await fetch('http://localhost:3000/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: userQuestion,
+          language,
+          history: chatHistory
+        })
+      });
+      const data = await res.json();
+      setChatHistory([...chatHistory, {role: 'user', content: userQuestion}, {role: 'agent', content: data.reply}]);
+      setUserQuestion('');
+    } catch (err) {
+      setOutput(`AI请求失败: ${err.message}`);
+    }
+  };
+
+  // 调用代码执行接口
+  const runCode = async () => {
+    const code = editorRef.current?.getValue();
+    setOutput('正在运行...');
+    try {
+      const res = await fetch('http://localhost:8000/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language, code })
+      });
+      const data = await res.json();
+      setOutput(data.success ? `✅ 运行成功\n${data.output}` : `❌ 运行失败\n${data.error}`);
+    } catch (err) {
+      setOutput(`请求失败: ${err.message}`);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100 p-4">
+      <h1 className="text-2xl font-bold mb-4 text-gray-800">智能编程助教</h1>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 左侧：对话区 */}
+        <div className="lg:col-span-1 bg-white rounded-lg shadow p-4 h-[80vh] flex flex-col">
+          <h2 className="font-semibold mb-2">答疑引导</h2>
+          <div className="flex-1 overflow-y-auto mb-4 border rounded p-2">
+            {chatHistory.map((item, idx) => (
+              <div key={idx} className={`mb-3 p-2 rounded ${item.role === 'user' ? 'bg-blue-100 ml-4' : 'bg-gray-100 mr-4'}`}>
+                {item.content}
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 border rounded px-3 py-2"
+              placeholder="输入你的问题..."
+              value={userQuestion}
+              onChange={e => setUserQuestion(e.target.value)}
+            />
+            <button className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600" onClick={askAgent}>提问</button>
+          </div>
+        </div>
+
+        {/* 右侧：代码编辑+输出 */}
+        <div className="lg:col-span-2 flex flex-col gap-4">
+          {/* 代码编辑器 */}
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="font-semibold">代码编辑器</h2>
+              <div className="flex gap-2">
+                <select
+                  className="border rounded px-2 py-1"
+                  value={language}
+                  onChange={e => setLanguage(e.target.value)}
+                >
+                  <option value="cpp">C++</option>
+                  <option value="python">Python</option>
+                </select>
+                <button className="bg-green-500 text-white px-4 py-1 rounded hover:bg-green-600" onClick={runCode}>运行代码</button>
+              </div>
+            </div>
+            <MonacoEditor
+              height="50vh"
+              language={language}
+              defaultValue={`// 在这里写下你的${language}代码`}
+              onMount={editor => editorRef.current = editor}
+            />
+          </div>
+          
+          {/* 运行输出 */}
+          <div className="bg-black text-white rounded-lg shadow p-4 h-[20vh] overflow-y-auto">
+            <pre>{output}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+  },
+})
+{
+  "name": "tutor-main-server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --watch index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "hono": "^3.12.0",
+    "@mastra/agents": "^0.1.0",
+    "instructor": "^1.10.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "sqlite-vec": "^0.1.0",
+    "openai": "^4.24.0",
+    "@hono/node-server": "^1.3.3",
+    "cors": "^2.8.5"
+  }
+}
+const { Hono } = require('hono');
+const { serve } = require('@hono/node-server');
+const cors = require('cors');
+const { openai } = require('./ai');
+const { searchKnowledge } = require('./knowledge');
+const { getHistory, updateHistory } = require('./memory');
+
+const app = new Hono();
+app.use('*', async (c, next) => {
+  c.header('Access-Control-Allow-Origin', '*');
+  c.header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  c.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (c.req.method === 'OPTIONS') {
+    return c.newResponse(null, 204);
+  }
+  await next();
+});
+
+// 核心提问接口
+app.post('/api/ask', async (c) => {
+  const { question, language, history } = await c.req.json();
+  
+  // 1. 检索用户记忆和历史交互
+  const userHistory = await getHistory();
+  // 2. 基于问题检索知识图谱知识点
+  const relatedKnowledge = await searchKnowledge(question, language);
+  // 3. 构造苏格拉底式提示词，调用Agent
+  const prompt = `
+你是一个面向C++/Python初学者的编程助教，你必须采用苏格拉底式提问法，不直接给出答案，通过递进式提问引导用户独立思考找到问题。
+用户当前问题是：${question}
+相关知识点参考：${JSON.stringify(relatedKnowledge)}
+用户历史交互：${JSON.stringify(userHistory)}
+请输出你的引导问题。
+  `;
+  const reply = await openai.chat.completions.create({
+    model: 'gpt-3.5-turbo',
+    messages: [{role: 'user', content: prompt}],
+    temperature: 0.7
+  });
+  const responseText = reply.choices[0].message.content;
+  
+  // 4. 更新用户记忆
+  await updateHistory({question, response: responseText, knowledge: relatedKnowledge});
+  
+  return c.json({reply: responseText});
+});
+
+const port = 3000;
+console.log(`主服务启动在端口 ${port}`);
+serve({
+  fetch: app.fetch,
+  port
+});
+const OpenAI = require('openai');
+const Instructor = require('instructor');
+
+// 多模型路由简单封装，可以在这里切换不同模型
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// 用instructor包装实现结构化输出
+const client = Instructor.fromOpenAI(openai);
+
+module.exports = { client, openai };
+const { open } = require('sqlite');
+const sqlite3 = require('sqlite3');
+
+// 初始化数据库
+async function initDB() {
+  const db = await open({
+    filename: './user_memory.db',
+    driver: sqlite3.Database
+  });
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question TEXT,
+      response TEXT,
+      knowledge_ids TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  return db;
+}
+
+async function getHistory() {
+  const db = await initDB();
+  const rows = await db.all('SELECT * FROM history ORDER BY created_at DESC LIMIT 20');
+  await db.close();
+  return rows;
+}
+
+async function updateHistory({question, response, knowledge}) {
+  const db = await initDB();
+  await db.run(
+    'INSERT INTO history (question, response, knowledge_ids) VALUES (?, ?, ?)',
+    [question, response, JSON.stringify(knowledge.map(k => k.id))]
+  );
+  await db.close();
+}
+
+module.exports = { getHistory, updateHistory };
+const sqlite3 = require('sqlite3');
+const { open } = require('sqlite');
+require('sqlite-vec');
+const { openai } = require('./ai');
+
+// 向量搜索知识点
+async function searchKnowledge(query, language) {
+  // 生成query向量
+  const embedding = await openai.embeddings.create({
+    model: 'text-embedding-3-small',
+    input: query
+  });
+  const queryVector = embedding.data[0].embedding;
+
+  const db = await open({
+    filename: './knowledge.db',
+    driver: sqlite3.Database
+  });
+  
+  // sqlite-vec做余弦相似度搜索
+  const rows = await db.all(`
+    SELECT id, title, content, language
+    FROM knowledge
+    ORDER BY vec_distance_cosine(embedding, ?) ASC
+    LIMIT 5
+  `, Buffer.from(new Float32Array(queryVector).buffer));
+
+  await db.close();
+  return rows.filter(r => r.language === language || r.language === 'all');
+}
+
+module.exports = { searchKnowledge };
+fastapi
+uvicorn
+pydantic
+python-multipart
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import subprocess
+import tempfile
+import os
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class CodeRunRequest(BaseModel):
+    language: str
+    code: str
+
+@app.post("/api/run")
+def run_code(req: CodeRunRequest):
+    if req.language == "python":
+        try:
+            res = subprocess.run(
+                ["python", "-c", req.code],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return {
+                "output": res.stdout,
+                "error": res.stderr,
+                "success": res.returncode == 0
+            }
+        except Exception as e:
+            return {"output": "", "error": str(e), "success": False}
+    
+    elif req.language == "cpp":
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.cpp', delete=False) as f:
+            f.write(req.code)
+            tmp_file = f.name
+        try:
+            # 编译
+            compile_res = subprocess.run(
+                ["g++", tmp_file, "-o", tmp_file + ".out"],
+                capture_output=True,
+                text=True
+            )
+            if compile_res.returncode != 0:
+                return {"output": "", "error": compile_res.stderr, "success": False}
+            # 运行
+            run_res = subprocess.run(
+                [tmp_file + ".out"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return {
+                "output": run_res.stdout,
+                "error": run_res.stderr,
+                "success": run_res.returncode == 0
+            }
+        finally:
+            os.unlink(tmp_file)
+            if os.path.exists(tmp_file + ".out"):
+                os.unlink(tmp_file + ".out")
+    
+    else:
+        raise HTTPException(status_code=400, detail="不支持的语言")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
